@@ -72,6 +72,7 @@ running_total = 0
 old_fine_lat = None
 old_fine_lon = None
 features = []
+osm_ids = set()
 #writer = csv.writer(csvfile)
 for segment in segments:
 	shape_id, coarse_lat, coarse_lon, fine_lat, fine_lon, segment_sequence = segment
@@ -84,15 +85,31 @@ for segment in segments:
 		stop_index += 1
 	if old_fine_lat is not None:
 		print running_total, "on between", old_fine_lat, old_fine_lon, "and", fine_lat, fine_lon
-		feature = geojson.Feature(
-			geometry=geojson.LineString([
-				(float(old_fine_lon), float(old_fine_lat)),
-				(float(fine_lon), float(fine_lat))
-			]),
-			properties={'num_passengers': round(running_total, 1)},
-			style={'stroke-width': running_total/10}
-		)
-		features.append(feature)
+		cursor.execute("""
+			select osm_id, st_asgeojson(st_transform(way, 4326))
+			from (select st_geographyfromtext('srid=4326;linestring(%s %s,%s %s)') as s) shape
+			join planet_osm_line on (st_dwithin(shape.s, st_transform(way, 4326), 10) and highway not in ('footway', ''))
+			order by anglediff(shape.s::geometry, st_transform(way, 4326)::geometry) asc
+		""", (old_fine_lon, old_fine_lat, fine_lon, fine_lat)) 
+		osm_matches = cursor.fetchall()
+		if len(osm_matches) == 0:
+			print "none!"
+			#x = 1/0
+		for osm_match in osm_matches:
+			if osm_match[0] in osm_ids:
+				print "skipping because osm id", osm_match[0], "already found"
+				break	
+			feature = geojson.Feature(
+				geometry=geojson.loads(osm_match[1]),
+				properties={
+					'num_passengers': round(running_total, 1),
+					'osm_id': osm_match[0]
+				},
+			)
+			print "found osm id", osm_match[0], "as a match"
+			osm_ids.add(osm_match[0])
+			features.append(feature)
+			break
 		#writer.writerow([old_fine_lat, old_fine_lon, fine_lat, fine_lon, round(running_total, 1)])
 	old_fine_lat = fine_lat
 	old_fine_lon = fine_lon
