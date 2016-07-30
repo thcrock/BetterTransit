@@ -23,6 +23,15 @@ def ensure_schema(engine):
         Column('routes', String),
     )
     Table(
+        'gtfs_reduced_node_pairs',
+        meta,
+        Column('node_one', BigInteger),
+        Column('node_two', BigInteger),
+        Column('num_trips', Integer),
+        Column('routes', String),
+        Column('shape_ids', String),
+    )
+    Table(
         'gtfs_ways',
         meta,
         Column('begin_node', BigInteger),
@@ -56,7 +65,6 @@ def snap_gtfs(engine):
             gtfs_trips
             join gtfs_calendar on (gtfs_trips.service_id = gtfs_calendar.service_id and tuesday = 1)
             where route_id not in ('Blue', 'Red', 'Brn', 'P', 'Y', 'Pink', 'Org', 'G')
-            and route_id = '9'
             group by 1
     ) distinct_shapes using (shape_id)
     group by shape_id
@@ -91,6 +99,38 @@ def snap_gtfs(engine):
                 )
     connection.commit()
 
+def reduce_node_pairs(engine):
+    connection = engine.raw_connection()
+    cursor = connection.cursor()
+    cursor.execute('select * from gtfs_node_pairs')
+    node_pairs = cursor.fetchall()
+    squashed_pairs = {}
+    for shape_id, begin_node, end_node, num_trips, route in node_pairs:
+        entry = None
+        if (end_node, begin_node) in squashed_pairs:
+            entry = (end_node, begin_node)
+        else:
+            entry = (begin_node, end_node)
+        if entry not in squashed_pairs:
+            squashed_pairs[entry] = {
+                'num_trips': 0,
+                'routes': set(),
+                'shape_ids': set()
+            }
+        squashed_pairs[entry]['num_trips'] += num_trips
+        squashed_pairs[entry]['routes'].add(route)
+        squashed_pairs[entry]['shape_ids'].add(shape_id)
+
+    cursor.execute('truncate gtfs_reduced_node_pairs')
+    for key in squashed_pairs:
+        row = squashed_pairs[key]
+        node_one, node_two = key
+        cursor.execute(
+            'insert into gtfs_reduced_node_pairs values (%s, %s, %s, %s, %s)',
+            (node_one, node_two, row['num_trips'], list(row['routes']), list(row['shape_ids']))
+        )
+    connection.commit()
+
 def compute_ways(engine):
     connection = engine.raw_connection()
     cursor = connection.cursor()
@@ -98,12 +138,12 @@ def compute_ways(engine):
     query = """
         insert into gtfs_ways
 	select
-            begin_node,
-            end_node,
+            node_one,
+            node_two,
             max(planet_osm_ways.id) as way_id,
             sum(num_trips) as num_trips,
             string_agg(distinct routes, ',') as routes,
-            string_agg(distinct shape_id, ',') as shapes,
+            string_agg(distinct shape_ids, ',') as shapes,
            st_asgeojson(st_makeline(
                    st_transform(
                            st_geomfromtext('point('||bnode.lon/100||' '||bnode.lat/100||')', 3785),
@@ -115,10 +155,10 @@ def compute_ways(engine):
                    )
            )) as geometry_geojson
 	from
-		gtfs_node_pairs
-		join planet_osm_ways on (nodes @> ARRAY[begin_node] and nodes @> ARRAY[end_node])
-		left join planet_osm_nodes bnode on (begin_node = bnode.id)
-		left join planet_osm_nodes enode on (end_node = enode.id)
+		gtfs_reduced_node_pairs
+		join planet_osm_ways on (nodes @> ARRAY[node_one] and nodes @> ARRAY[node_two])
+		left join planet_osm_nodes bnode on (node_one = bnode.id)
+		left join planet_osm_nodes enode on (node_two = enode.id)
 	group by 1, 2, 7
 	order by 4 desc"""
     cursor.execute(query)
@@ -140,5 +180,6 @@ if __name__ == '__main__':
     engine = create_engine("postgresql://transit:transit@127.0.0.1/transit")
     ensure_schema(engine)
     snap_gtfs(engine)
+    reduce_node_pairs(engine)
     compute_ways(engine)
     export(engine)
