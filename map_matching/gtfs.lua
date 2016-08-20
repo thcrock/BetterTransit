@@ -12,10 +12,11 @@ end
 -- ways processing, called from OSRM
 function way_function (way, result)
   local way_id = '' .. way:id()
-  print(way_id)
   if arr[way_id] then
-	result.forward_speed = 1.0
-	result.forward_mode = 1
+	result.forward_speed = 25.0
+	result.forward_mode = mode.bus
+	result.backward_speed = 25.0
+	result.backward_mode = mode.bus
 	return 1
   else
 	return 0
