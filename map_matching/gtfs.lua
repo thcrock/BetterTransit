@@ -13,9 +13,9 @@ end
 function way_function (way, result)
   local way_id = '' .. way:id()
   if arr[way_id] then
-	result.forward_speed = 25.0
+	result.forward_speed = 50.0
 	result.forward_mode = mode.bus
-	result.backward_speed = 25.0
+	result.backward_speed = 50.0
 	result.backward_mode = mode.bus
 	return 1
   else
