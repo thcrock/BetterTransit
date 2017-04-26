@@ -3,6 +3,7 @@ from airflow.operators.subdag_operator import SubDagOperator
 
 from dags.prepare import define_prepare
 from dags.import_readings import define_import_readings
+from dags.bus_speed import define_bus_speed
 
 from datetime import datetime
 
@@ -34,4 +35,11 @@ import_readings = SubDagOperator(
     dag=dag
 )
 
+bus_speeds = SubDagOperator(
+    subdag=define_bus_speed(MAIN_DAG_NAME),
+    task_id='bus_speed',
+    dag=dag
+)
+
 import_readings.set_upstream(prepare)
+bus_speeds.set_upstream(import_readings)
